@@ -77,11 +77,11 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         
         function obj = Catalog(data, options)
             arguments
-                data % structure array or table
+                data = struct.empty % structure array or table
                 options.?Catalog
             end
             
-            if nargin > 0
+            if nargin > 0 && ~isempty(data)
                 if isa(data, 'table')
                     obj.ItemsData = table2struct(data);
                 elseif isa(data, 'struct')
