@@ -341,6 +341,107 @@ classdef CatalogTest < matlab.unittest.TestCase
             testCase.verifyError(@() testCase.TestCatalog.add(item2), ...
                 'Catalog:UniqueIdentifierExists');
         end
+
+        % Tests for ItemData class
+        function testItemDataClass(testCase)
+            % Create test data
+            data = struct('Name', {'Item1', 'Item2'}, 'Value', {1, 2});
+            itemData = catalog.item.ItemData(data);
+            
+            % Test Items property
+            items = itemData.Items;
+            testCase.verifyEqual(numel(items), 2);
+            
+            % Test indexing
+            item = itemData.Items(1);
+            testCase.verifyEqual(item.Name, 'Item1');
+            
+            % Test size
+            sz = size(itemData);
+            testCase.verifyEqual(sz, [1 2]);
+            
+            % Test concatenation
+            data2 = struct('Name', {'Item3'}, 'Value', {3});
+            itemData2 = catalog.item.ItemData(data2);
+            combined = [itemData, itemData2];
+            testCase.verifyEqual(size(combined.Items, 2), 3);
+        end
+        
+        % Tests for serialization
+        function testJsonSerialization(testCase)
+            import matlab.unittest.fixtures.WorkingFolderFixture
+            testCase.applyFixture(WorkingFolderFixture)
+
+            % Create test data
+            item.Name = "SerializeTest";
+            item.Value = 42;
+            testCase.TestCatalog.add(item);
+            
+            jsonSerializer = catalog.serializer.JsonSerializer();
+            jsonSerializer.PathName = fullfile('.', 'test.json');
+            
+            % Save data
+            data = testCase.TestCatalog.getAll();
+            jsonSerializer.save(data);
+            
+            % Verify file exists
+            testCase.verifyTrue( isfolder(jsonSerializer.PathName) );
+            
+            % Load and verify data
+            loadedData = jsonSerializer.load();
+            testCase.verifyEqual(loadedData(1).Name, 'SerializeTest');
+            testCase.verifyEqual(loadedData(1).Value, 42);
+        end
+        
+        function testMatSerialization(testCase)
+            import matlab.unittest.fixtures.WorkingFolderFixture
+            testCase.applyFixture(WorkingFolderFixture)
+
+            % Create test data
+            item.Name = "SerializeTest";
+            item.Value = 42;
+            testCase.TestCatalog.add(item);
+
+            matSerializer = catalog.serializer.MatSerializer();
+            matSerializer.PathName = fullfile('.', 'test.mat');
+            
+            % Save data
+            data = testCase.TestCatalog.getAll();
+            matSerializer.save(data);
+            
+            % Verify file exists
+            testCase.verifyTrue(exist(matSerializer.PathName, 'file') == 2);
+            
+            % Load and verify data
+            loadedData = matSerializer.load();
+            testCase.verifyEqual(loadedData(1).Name, "SerializeTest");
+            testCase.verifyEqual(loadedData(1).Value, 42);
+        end
+        
+        % Tests for persistent storage
+        function testPersistentStorage(testCase)
+            import matlab.unittest.fixtures.WorkingFolderFixture
+            testCase.applyFixture(WorkingFolderFixture)
+            
+            catalog = PersistentCatalog('SaveFolder', '.');
+            
+            % Add test data
+            item.Name = "PersistTest";
+            item.Value = 42;
+            catalog.add(item);
+            
+            % Save catalog
+            catalog.save();
+            
+            % Create new instance and load
+            catalog2 = PersistentCatalog('SaveFolder', '.');
+            catalog2.load();
+            
+            % Verify data
+            testCase.verifyEqual(catalog2.NumItems, 1);
+            loadedItem = catalog2.get("PersistTest");
+            testCase.verifyEqual(loadedItem.Value, 42);
+        end
     end
     
     methods(TestMethodTeardown)
