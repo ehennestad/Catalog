@@ -442,6 +442,130 @@ classdef CatalogTest < matlab.unittest.TestCase
             loadedItem = catalog2.get("PersistTest");
             testCase.verifyEqual(loadedItem.Value, 42);
         end
+
+        % Additional tests for improved coverage
+        function testItemDataParenOperations(testCase)
+            % Create test data
+            data = struct('Name', {'Item1', 'Item2'}, 'Value', {1, 2});
+            itemData = catalog.item.ItemData(data);
+            
+            % Test paren reference
+            item = itemData(1);
+            testCase.verifyEqual(item.Name, 'Item1');
+            
+            % Test paren assign
+            newData = struct('Name', 'Item3', 'Value', 3);
+            itemData(3) = newData;
+            testCase.verifyEqual(itemData(3).Name, 'Item3');
+            
+            % Test paren delete
+            itemData(3) = [];
+            testCase.verifyEqual(size(itemData, 2), 2);
+            
+            % Test empty
+            emptyData = catalog.item.ItemData.empty();
+            testCase.verifyTrue(isempty(emptyData));
+        end
+        
+        function testSerializationFormat(testCase)
+            % Create test data
+            item.Name = "SerializeTest";
+            item.Value = 42;
+            testCase.TestCatalog.add(item);
+            
+            % Setup serializer with different formats
+            tmpDir = tempname;
+            mkdir(tmpDir);
+            cleanupObj = onCleanup(@() rmdir(tmpDir, 's'));
+            
+            % Test JSON format
+            jsonSerializer = catalog.serializer.JsonSerializer();
+            jsonSerializer.PathName = tmpDir;
+            
+            % Save and verify
+            data = testCase.TestCatalog.getAll();
+            jsonSerializer.save(data, 'Names', 'SerializeTest');
+            
+            % Test MAT format
+            matSerializer = catalog.serializer.MatSerializer();
+            matSerializer.PathName = tmpDir;
+            
+            % Save and verify
+            matSerializer.save(data);
+        end
+        
+        function testComplexItemName(testCase)
+            % Test item name handling with different types
+            item1.Name = "Test1";
+            item1.Value = 1;
+            testCase.TestCatalog.add(item1);
+            
+            % Test with table
+            data = table('Size', [1 2], 'VariableTypes', {'string', 'double'}, ...
+                        'VariableNames', {'Name', 'Value'});
+            data.Name = "Test2";
+            data.Value = 2;
+            testCase.TestCatalog.add(data);
+            
+            % Test with invalid input
+            invalidItem.Value = 3;  % Missing Name field
+            testCase.verifyError(@() testCase.TestCatalog.add(invalidItem), ...
+                'Catalog:MissingName');
+        end
+        
+        function testObjectCacheUpdate(testCase)
+            % Create a test class
+            testClassName = 'TestItemClass';
+            testClassDef = sprintf(['classdef %s < handle\n' ...
+                                  '    properties\n' ...
+                                  '        Name\n' ...
+                                  '        Value\n' ...
+                                  '        Uuid\n' ...
+                                  '    end\n' ...
+                                  '    methods\n' ...
+                                  '        function obj = %s(data)\n' ...
+                                  '            if nargin > 0\n' ...
+                                  '                obj.Name = data.Name;\n' ...
+                                  '                obj.Value = data.Value;\n' ...
+                                  '                obj.Uuid = data.Uuid;\n' ...
+                                  '            end\n' ...
+                                  '        end\n' ...
+                                  '        function T = toTable(obj)\n' ...
+                                  '            T = struct2table(struct(obj));\n' ...
+                                  '        end\n' ...
+                                  '    end\n' ...
+                                  'end'], testClassName, testClassName);
+            
+            % Create temporary file for test class
+            tmpFolder = tempname;
+            mkdir(tmpFolder);
+            classFile = fullfile(tmpFolder, [testClassName, '.m']);
+            fid = fopen(classFile, 'w');
+            fprintf(fid, '%s', testClassDef);
+            fclose(fid);
+            
+            % Add folder to path temporarily
+            addpath(tmpFolder);
+            cleanupObj = onCleanup(@() rmpath(tmpFolder));
+            
+            % Test object cache updates
+            testCase.TestCatalog.ItemRepresentation = "object";
+            testCase.TestCatalog.ItemClass = testClassName;
+            
+            item.Name = "CacheTest";
+            item.Value = 42;
+            item.Uuid = matlab.lang.internal.uuid;
+            testCase.TestCatalog.add(item);
+            
+            % Get object and modify it
+            obj = testCase.TestCatalog.get("CacheTest");
+            obj.Value = 100;
+            
+            % Update cache and verify
+            testCase.TestCatalog.updateItemDataFromObjectCache();
+            updatedItem = testCase.TestCatalog.get("CacheTest");
+            testCase.verifyEqual(updatedItem.Value, 100);
+        end
     end
     
     methods(TestMethodTeardown)
