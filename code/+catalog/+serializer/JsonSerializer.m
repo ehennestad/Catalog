@@ -45,16 +45,22 @@ classdef JsonSerializer < catalog.serializer.abstract.StructSerializer
             if isfolder(obj.PathName)
                 [cleanupObj, backupPathName] = obj.backupCatalog(); %#ok<ASGLU>
             end
+            if isempty(options.Names)
+                options.Names = string({entries.Name});
+            end
 
             for i = 1:numel(entries)
                 jsonStr = jsonencode(entries(i), 'PrettyPrint', true);
-                fileName = obj.createFilename(options.Names{i});
+
+                fileName = obj.createFilename(options.Names(i));
                 savePath = fullfile(obj.PathName, fileName);
                 obj.filewrite(savePath, jsonStr)
             end
             
-            rmdir(backupPathName, 's')
-            clear cleanupObj
+            if exist("backupPathName", "var")
+                rmdir(backupPathName, 's')
+                clear cleanupObj
+            end
         end
 
         function data = load(obj)

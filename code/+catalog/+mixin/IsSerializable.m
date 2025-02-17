@@ -57,15 +57,15 @@ classdef IsSerializable < handle & catalog.mixin.HasPropertyArgs
             if ismissing(obj.SaveFolder)
                 error('No file location specified')
             end
-
-            obj.Serializer.save(obj.Data, "Names", obj.Names);
+            data = table2struct(obj.Data);
+            obj.Serializer.save(data, "Names", obj.Names);
         end
 
         function load(obj)
             if ismissing(obj.SaveFolder)
                 error('No file location specified')
             end
-            obj.Data = obj.Serializer.load();
+            obj.Data = struct2table(obj.Serializer.load());
         end
 
         function delete(obj, item)

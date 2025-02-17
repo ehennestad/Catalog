@@ -10,7 +10,7 @@ classdef PersistentCatalog < Catalog & catalog.mixin.IsSerializable
 %   
 
     properties (Dependent, Access = protected)
-        Data % Link Catalog ItemsData property to IsSerializable Data property.
+        Data % Bridge Catalog ItemsData property to IsSerializable Data property.
         Names
     end
 

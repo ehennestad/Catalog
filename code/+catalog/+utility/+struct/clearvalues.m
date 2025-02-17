@@ -20,12 +20,21 @@ function Sout = clearvalues(Sin, useZero)
             
             case 'cell'
                 newValue = {};
-                
+            
+            case 'categorical'
+                newValue = categorical(missing, categories(value));
+
             case 'table'
                 error('Not supported for structs containing tables')
 
+            case 'datetime'
+                newValue = datetime.empty;
+
             case {'timeseries', 'timetable'}
                 error('Not supported for structs containing timeseries or timetables')
+
+            case 'string'
+                newValue = "";
         
             otherwise
                 try

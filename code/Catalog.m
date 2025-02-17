@@ -1,4 +1,7 @@
-classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasPropertyArgs
+classdef Catalog < handle & ...
+                   matlab.mixin.CustomDisplay & ...
+                   catalog.mixin.HasPropertyArgs
+
 % Catalog - A collection of unique, named and ordered items
 %
 %   This class is something of a hybrid between a dictionary and a table.
@@ -17,6 +20,7 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
 %   replace, remove. This is to ensure that the identity (uuid) of items 
 %   are maintained.
 
+
 %   Todo:
 %   [ ] Add custom sorting of items. Default is to sort by name...
 %   [ ] Reorder variables in table display. Name first. Allow specification
@@ -27,9 +31,17 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
 %       have the same name.
 %   [ ] Consider whether to have a Preferences or Configuration property
 %       whose value is an object of a Preferences/Configuration class. 
+%   [ ] Implement matlab.mixin.indexing.RedefinesParen instead of subsref
+%   [ ] Establish a Data + Metadata/Configuration framework.
+%   [ ] Implement events, ItemAdded, ItemRemoved, ItemModified
+
+%   Questions.
+%   - If items are represented by a class, should we use class property
+%   attributes like Hidden and Access to hide variables in the table
+%   display
 
 %   Notes:
-%       The class uses a struct array to store data internally.
+%       The class uses a table to store data internally.
 
     % properties (Abstract, Constant)
     %     DEFAULT_ITEM % ??
@@ -40,8 +52,10 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
     % end
 
     properties (Hidden)
-        ItemType (1,1) string = missing
-        ItemClass (1,1) string = "struct"
+        ItemType (1,1) string = missing   % A label / category
+        ItemClass (1,1) string = "struct" % Class name
+        ItemConstructorInputType (1,1) string ...
+            {mustBeMember(ItemConstructorInputType, ["struct", "table", "nvpairs"])} = "table"
     end
 
     properties
@@ -55,16 +69,17 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
 
     properties (Hidden)
         NameField (1,1) string = "Name"
+        IDField (1,1) string = "Uuid"
         IgnoreVariables (1,:) string = string.empty
     end
 
     properties % Catalog preferences
         ItemRepresentation (1,1) string ...
-            {mustBeMember(ItemRepresentation, ["struct", "table"])} = "struct"
+            {mustBeMember(ItemRepresentation, ["struct", "table", "object"])} = "struct"
     end
     
     properties (Access = protected)
-        ItemsData (1,:) struct
+        ItemsData (:,:) table
         ObjectCache (1,1) dictionary % Todo: here or subclass?
     end
 
@@ -80,32 +95,18 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
                 data = struct.empty % structure array or table
                 options.?Catalog
             end
-            
+                        
+            obj.assignPropertyArguments(options)
+
             if nargin > 0 && ~isempty(data)
                 if isa(data, 'table')
-                    obj.ItemsData = table2struct(data);
-                elseif isa(data, 'struct')
                     obj.ItemsData = data;
+                elseif isa(data, 'struct')
+                    obj.ItemsData = struct2table(data);
                 end
                 obj.ensureItemsDataHasUuids()
+                obj.assertUniqueItemUUids()
             end
-
-            obj.assignPropertyArguments(options)
-        end
-    end
-
-    methods % Get methods for properties
-        
-        function itemNames = get.ItemNames(obj)
-            if isempty(obj.ItemsData)
-                itemNames = string.empty;
-            else
-                itemNames = string( {obj.ItemsData.(obj.NameField)} );
-            end
-        end
-
-        function numItems = get.NumItems(obj)
-            numItems = numel(obj.ItemsData);
         end
     end
 
@@ -114,11 +115,21 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         % Get a blank item from the Catalog
         function blankItem = getBlankItem(obj)
             if obj.NumItems == 0
-                warning('Catalog does not have any items yet.')
+                warning('CATALOG:NotConfigured', 'Catalog does not have any items yet.')
                 return
             end
-            item = obj.ItemsData(1);
-            blankItem = catalog.utility.struct.clearvalues(item);
+            item = obj.ItemsData(1,:);
+            structItem = table2struct(item);
+            blankItem = catalog.utility.struct.clearvalues(structItem);
+           
+            switch obj.ItemRepresentation
+                case 'struct'
+                    %pass
+                case 'table'
+                    blankItem = struct2table(blankItem, "AsArray", true);
+                case 'object'
+                    blankItem = obj.getItemObject(blankItem);
+            end
         end
 
         % Add a new item to the Catalog
@@ -126,7 +137,11 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         
             arguments
                 obj (1,1) Catalog       % An object of this class
-                newItem (1,1) struct       % A structure representing an item of this class
+                newItem (1,:) {mustBeA(newItem, ["struct", "table"])}  % A structure or table representing an item of this class
+            end
+
+            if isa(newItem, 'struct')
+                newItem = struct2table(newItem);
             end
 
             % Todo:
@@ -140,14 +155,21 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
                     'An item with the name "%s" already exists', name);  
             end
 
-            if isfield(newItem, 'Uuid')
-                assert( ~any(strcmp(obj.ItemsData.Uuid, newItem.Uuid)), ...
-                    'An item with the uuid "%s" already exist in the Catalog', newItem.Uuid);
+            idName = obj.IDField;
+
+            if ~isempty(obj.ItemsData)
+                if istablevar(newItem, idName)
+                    allItemIdentifiers = obj.ItemsData.(idName);
+                    newItemIdentifier = newItem.(idName);
+                    assert( ~any(strcmp(allItemIdentifiers, newItemIdentifier)), ...
+                        'Catalog:UniqueIdentifierExists', ...
+                        'An item with the uuid "%s" already exists in the Catalog', newItemIdentifier);
+                end
             end
 
             % Create a uuid
-            if ~isfield(newItem, 'Uuid')
-                newItem.Uuid = string( matlab.lang.internal.uuid );
+            if ~isfield(newItem, idName)
+                newItem.(idName) = string( matlab.lang.internal.uuid );
             end
 
             % Todo: Reorder fields.
@@ -155,7 +177,7 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
             if isempty(obj.ItemsData) 
                 obj.ItemsData = newItem; % Todo: Initialize data using empty item, on first time startup...
             else
-                obj.ItemsData(end+1) = newItem;
+                obj.ItemsData(end+1, :) = newItem;
             end
 
             % Sort items.
@@ -173,7 +195,7 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
             IND = obj.getItemIndex(identifier);
             
             if any(IND)
-                item = obj.ItemsData(IND);
+                item = obj.ItemsData(IND, :);
                 item = obj.getOutputRepresentation(item);
             else
                 error('Catalog:ItemNotFound', 'No item was found with the given identifier: %s', identifier)
@@ -187,16 +209,28 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
 
         % Replace an item in the Catalog
         function newItem = replace(obj, newItem)
-             
+            
+            % Todo: Error out if Catalog is providing item objects. They
+            % should be modified directly...
+
             % Make sure item has necessary fields...
-            %newItem = obj.validateItem(newItem);
+            % newItem = obj.validateItem(newItem);
             
             % Todo: Replacement should happen using the uuid.
+
+            arguments
+                obj
+                newItem
+            end
+
+            if isa(newItem, 'struct')
+                newItem = struct2table(newItem);
+            end
 
             itemName = obj.getItemName(newItem);
             [itemExists, insertIdx] = obj.contains(itemName);
 
-            isMatch = strcmp([obj.ItemsData.Uuid], newItem.Uuid);
+            isMatch = obj.matchesExistingItemIdentifier(newItem);
             
             if ~any(isMatch)
                 error('Catalog:ItemNotFound', 'Item with name "%s" does not exist in this catalog. Use the method ''add'' to add a new item to the catalog', itemName)
@@ -205,7 +239,7 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
                     assert( isequal(insertIdx, find(isMatch)), ...
                         'Can not replace item because an item with the given name already exists, but the uuid is different.')
                 end
-                obj.ItemsData(isMatch) = newItem;
+                obj.ItemsData(isMatch, :) = newItem;
             end
 
             if ~nargout
@@ -217,9 +251,9 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         function remove(obj, identifier)
             IND = obj.getItemIndex(identifier);
             if any(IND)
-                obj.ItemsData(IND) = [];
-                itemName = obj.ItemNames(IND);
-                fprintf('"%s" was removed from the catalog.\n', itemName)
+                removedItemName = obj.ItemNames(IND);  % NB: Capture before removal
+                obj.ItemsData(IND, :) = [];
+                fprintf('"%s" was removed from the catalog.\n', removedItemName)
             else
                 if ismissing(obj.ItemType)
                     error('Catalog:ItemNotFound', '"%s" was not found in catalog', identifier)
@@ -235,6 +269,25 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
             if nargout == 2
                 idx = find(tf);
             end
+        end
+    
+        function clearObjectCache(obj)
+            obj.ObjectCache = dictionary;
+        end
+    end
+
+    methods % Get methods for properties
+        
+        function itemNames = get.ItemNames(obj)
+            if isempty(obj.ItemsData)
+                itemNames = string.empty;
+            else
+                itemNames = string( obj.ItemsData.(obj.NameField) );
+            end
+        end
+
+        function numItems = get.NumItems(obj)
+            numItems = height(obj.ItemsData);
         end
     end
 
@@ -254,7 +307,7 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
             fprintf(varEquals)
             disp(obj)
 
-            obj.CollapseItemDisplay = true;
+            obj.CollapseItemDisplay = true; % Todo: onCleanup instead
         end
     end
     
@@ -262,27 +315,34 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         
         function sortItems(obj)
             [~, idx] = sort(obj.ItemNames);
-            obj.ItemsData = obj.ItemsData(idx);
+            obj.ItemsData = obj.ItemsData(idx, :);
         end
 
         function data = getOutputRepresentation(obj, item)
             switch obj.ItemRepresentation
                 case 'struct'
-                    data = item;
+                    data = table2struct(item);
                 case 'table'
-                    data = struct2table(item, 'AsArray', true);
+                    data = item;
+                case 'object'
+                    data = obj.getItemObject(item);
             end
         end
     end
 
     methods (Access = private)
+        function tf = matchesExistingItemIdentifier(obj, newItem)
+            idName = obj.IDField;
+            tf = strcmp(obj.ItemsData.(idName), newItem.(idName));
+        end
+
         function idx = getItemIndex(obj, itemName)
             
             if isnumeric(itemName) % Assume index was given instead of name
                 idx = itemName;
                 
             elseif obj.isuuid(itemName) % Assume uuid was given instead of name
-                idx = find(strcmp({obj.ItemsData.Uuid}, itemName));
+                idx = find(strcmp(obj.ItemsData.(obj.IDField), itemName));
                 
             else
                 idx = find(strcmp(obj.ItemNames, itemName));
@@ -290,21 +350,38 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         end
 
         function name = getItemName(obj, item)
-            if isfield(item, obj.NameField)
-                name = item.(obj.NameField);
+            if istable(item)
+                if istablevar(item, obj.NameField)
+                    name = item.(obj.NameField);
+                else
+                    error('Catalog:MissingName', 'The given item table is missing the name column ("%s").', obj.NameField);
+                end
+            elseif isstruct(item)
+                if isfield(item, obj.NameField)
+                    name = item.(obj.NameField);
+                else
+                    error('Catalog:MissingName', 'The given item struct does not have a name field ("%s").', obj.NameField);
+                end
             else
-                error('Catalog:UnnamedItem', 'The given item does not have a name.');
+                error('Catalog:InvalidItemType', 'Item must be either a struct or a table.');
             end
+        end
+
+        function getItemIdentifier(obj, item)
+
         end
     
         function displayItems(obj, varName)
             titleTxt = sprintf('  <strong>Available Items:</strong>');
 
-            T = struct2table(obj.ItemsData, 'AsArray', true);
+            obj.updateItemDataFromObjectCache()
+
+            %T = struct2table(obj.ItemsData, 'AsArray', true);
+            T = obj.ItemsData;
             T.Properties.RowNames = arrayfun(@(i) num2str(i), 1:obj.NumItems, 'uni', 0);
             T.(obj.NameField) = string(T.(obj.NameField));
             try %#ok<TRYNC>
-                T = removevars(T, 'Uuid');
+                %T = removevars(T, obj.IDField);
             end
             fprintf('%s\n', titleTxt)
             
@@ -331,9 +408,63 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         end
 
         function ensureItemsDataHasUuids(obj)
-            if ~isfield(obj.ItemsData, 'Uuid')
-                for i = 1:numel(obj.ItemsData)
-                    obj.ItemsData(i).Uuid = string( matlab.lang.internal.uuid );
+            if ~istablevar(obj.ItemsData, obj.IDField)
+                uuid = arrayfun(@(i) string( matlab.lang.internal.uuid() ), 1:obj.NumItems);
+                obj.ItemsData = addvars(obj.ItemsData, uuid', 'NewVariableNames', obj.IDField);
+            end
+        end
+        function assertUniqueItemUUids(obj)
+            allIdentifiers = obj.ItemsData.(obj.IDField);
+            assert(numel(allIdentifiers) == numel(unique(allIdentifiers)), ...
+                'One or more catalog items do not have unique identifiers.')
+        end
+    
+        function itemObjects = getItemObject(obj, items)
+            
+            assert(~ismissing(obj.ItemClass) && ~strcmp(obj.ItemClass, 'struct'))
+            
+            itemObjects = cell( 1, height(items) );
+            allItemIdentifiers = items.(obj.IDField);
+
+            for i = 1:height(items)
+                itemKey = allItemIdentifiers(i);
+                if isConfigured(obj.ObjectCache) && isKey(obj.ObjectCache, itemKey )
+                    itemObjects{i} = obj.ObjectCache( itemKey );
+                else
+                    switch obj.ItemConstructorInputType
+                        case 'table'
+                            itemObjects{i} = feval(obj.ItemClass, items(i,:));
+                        case 'struct'
+                            itemObjects{i} = feval(obj.ItemClass, table2struct(items(i,:)));
+                        case 'nvpairs'
+                            s = table2struct(items(i,:)) ;
+                            s = rmfield(s, obj.IDField);
+                            nvPairs = namedargs2cell( s );
+                            itemObjects{i} = feval(obj.ItemClass, nvPairs{:});
+
+                    end
+                    obj.ObjectCache( itemKey ) = itemObjects{i};
+                end
+            end
+            itemObjects = cat(2, itemObjects{:});
+        end
+    
+        function updateItemDataFromObjectCache(obj)
+            if ~isConfigured(obj.ObjectCache)
+                return
+            end
+
+            cachedKeys = string( obj.ObjectCache.keys() );
+
+            if isempty(cachedKeys)
+                return
+            else
+                for iKey = 1:numel(cachedKeys)
+                    currentKey = cachedKeys(iKey);
+                    currentObject = obj.ObjectCache(currentKey);
+                    
+                    rowIdx = obj.getItemIndex(currentKey);
+                    obj.ItemsData(rowIdx, :) = currentObject.toTable();
                 end
             end
         end
@@ -381,6 +512,9 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
             varargout = cell(1, numOutputs);
                         
             if strcmp( s(1).type, '()')
+                if numel(s(1).subs) == 1
+                    s(1).subs{end+1} = ':';
+                end
                 item = builtin('subsref', obj.ItemsData, s(1));
                 item = obj.getOutputRepresentation(item);
                 if numel(s) == 1
@@ -403,6 +537,7 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
         
         function n = numArgumentsFromSubscript(obj, s, indexingContext)
             if strcmp( s(1).type, '()')
+                s(1).subs{end+1} = ':';
                 item = builtin('subsref', obj.ItemsData, s(1));
                 item = obj.getOutputRepresentation(item);
                 n = builtin('numArgumentsFromSubscript', item, s(2:end), indexingContext);
@@ -413,7 +548,6 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
     end
 
     methods (Static, Access = private)
-        
         function tf = isuuid(value)
         % isuuid - Check if a string value is a formatted as a uuid
             tf = false;
@@ -448,4 +582,8 @@ classdef Catalog < handle & matlab.mixin.CustomDisplay & catalog.mixin.HasProper
             end
         end
     end
+end
+
+function tf = istablevar(T, varName)
+    tf = any(strcmp(T.Properties.VariableNames, varName));
 end
