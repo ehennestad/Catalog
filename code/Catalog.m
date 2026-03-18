@@ -336,8 +336,6 @@ classdef Catalog < handle & ...
                 % Fire ItemRemoved event
                 eventData = catalog.event.CatalogEventData(removedItemName, IND, removedItemData);
                 notify(obj, 'ItemRemoved', eventData)
-
-                fprintf('"%s" was removed from the catalog.\n', removedItemName)
             else
                 if ismissing(obj.ItemType)
                     error('Catalog:ItemNotFound', '"%s" was not found in catalog', identifier)

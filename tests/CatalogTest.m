@@ -62,7 +62,7 @@ classdef CatalogTest < matlab.unittest.TestCase
             item.Value = 123;
 
             testCase.TestCatalog.add(item);
-            evalc('testCase.TestCatalog.remove("ToRemove")');
+            testCase.TestCatalog.remove("ToRemove");
 
             testCase.verifyEqual(testCase.TestCatalog.NumItems, 0);
             testCase.verifyEmpty(testCase.TestCatalog.ItemNames);
@@ -139,12 +139,6 @@ classdef CatalogTest < matlab.unittest.TestCase
             testCase.TestCatalog.ItemRepresentation = "table";
             result = testCase.TestCatalog.get("RepTest");
             testCase.verifyClass(result, 'table');
-
-            % Test object representation
-            testCase.TestCatalog.ItemRepresentation = "object";
-            testCase.TestCatalog.ItemClass = "containers.Map";
-            testCase.verifyError(@() testCase.TestCatalog.get("RepTest"), ...
-                'MATLAB:Containers:Map:IncorrectNumberInputs');
         end
 
         function testGetBlankItem(testCase)
@@ -169,16 +163,26 @@ classdef CatalogTest < matlab.unittest.TestCase
                 'CATALOG:NotConfigured');
         end
 
-        function testObjectCache(testCase)
-            % Test object cache functionality
+        function testObjectCacheClearAndRepopulate(testCase)
+            % Verify that clearing the object cache does not lose data,
+            % and that objects are re-created on next access.
+            [~, cleanupObj] = createTestItemClass(); %#ok<ASGLU>
+            testCase.TestCatalog.ItemRepresentation = "object";
+            testCase.TestCatalog.ItemClass = "TestItemClass";
+
             item.Name = "CacheTest";
             item.Value = 42;
-
             testCase.TestCatalog.add(item);
-            testCase.TestCatalog.clearObjectCache();
 
-            % Verify cache was cleared
-            testCase.verifyEqual(testCase.TestCatalog.NumItems, 1);
+            % Populate cache by accessing the item
+            obj1 = testCase.TestCatalog.get("CacheTest");
+
+            % Clear and re-access — should get a fresh object with same data
+            testCase.TestCatalog.clearObjectCache();
+            obj2 = testCase.TestCatalog.get("CacheTest");
+            testCase.verifyEqual(obj2.Value, 42);
+            testCase.verifyFalse(obj1 == obj2, ...
+                'After clearing cache, a new object instance should be created');
         end
 
         function testIndexing(testCase)
@@ -307,10 +311,6 @@ classdef CatalogTest < matlab.unittest.TestCase
             testCase.TestCatalog.ItemType = "TestType";
             str = evalc('disp(testCase.TestCatalog)');
             testCase.verifySubstring(str, 'TestType');
-        end
-
-        function testPackagePrefixChecking(testCase)
-            % Test package prefix checking (placeholder)
         end
 
         function testItemIdentifierHandling(testCase)
@@ -566,23 +566,21 @@ classdef CatalogTest < matlab.unittest.TestCase
 
         % Events
         function testItemAddedEvent(testCase)
-            eventFired = false;
-            eventItemName = "";
+            capturedEventData = [];
             listener = addlistener(testCase.TestCatalog, 'ItemAdded', ...
-                @(~, e) assignin('caller', 'eventFired', true));
+                @(~, e) assignCaptured(e));
 
             item.Name = "EventTest";
             item.Value = 1;
             testCase.TestCatalog.add(item);
 
-            % Verify event fires by using a different approach
-            eventData = [];
-            listener2 = addlistener(testCase.TestCatalog, 'ItemAdded', ...
-                @(~, e) testCase.captureEvent(e));
-            testCase.TestCatalog.add(struct('Name', 'EventTest2', 'Value', 2));
-
+            testCase.verifyNotEmpty(capturedEventData);
+            testCase.verifyEqual(capturedEventData.ItemName, "EventTest");
             delete(listener);
-            delete(listener2);
+
+            function assignCaptured(eventData)
+                capturedEventData = eventData;
+            end
         end
 
         function testItemRemovedEvent(testCase)
@@ -593,7 +591,7 @@ classdef CatalogTest < matlab.unittest.TestCase
             capturedEventData = [];
             listener = addlistener(testCase.TestCatalog, 'ItemRemoved', ...
                 @(~, e) assignCaptured(e));
-            evalc('testCase.TestCatalog.remove("RemoveEventTest")');
+            testCase.TestCatalog.remove("RemoveEventTest");
 
             testCase.verifyNotEmpty(capturedEventData);
             testCase.verifyEqual(capturedEventData.ItemName, "RemoveEventTest");
@@ -767,7 +765,7 @@ classdef CatalogTest < matlab.unittest.TestCase
             persistentCatalog = PersistentCatalog('SaveFolder', '.', 'AutoSave', true);
             persistentCatalog.add(struct('Name', 'RemoveMe', 'Value', 1));
             persistentCatalog.add(struct('Name', 'KeepMe', 'Value', 2));
-            evalc('persistentCatalog.remove("RemoveMe")');
+            persistentCatalog.remove("RemoveMe");
 
             reloaded = PersistentCatalog('SaveFolder', '.');
             testCase.verifyEqual(reloaded.NumItems, 1);
@@ -1025,7 +1023,7 @@ classdef CatalogTest < matlab.unittest.TestCase
         function testRemoveByNumericIndex(testCase)
             testCase.TestCatalog.add(struct('Name', 'A', 'Value', 1));
             testCase.TestCatalog.add(struct('Name', 'B', 'Value', 2));
-            evalc('testCase.TestCatalog.remove(1)');
+            testCase.TestCatalog.remove(1);
             testCase.verifyEqual(testCase.TestCatalog.NumItems, 1);
             testCase.verifyEqual(testCase.TestCatalog.ItemNames, "B");
         end
@@ -1153,13 +1151,13 @@ classdef CatalogTest < matlab.unittest.TestCase
             testCase.verifyEqual(item.Name, "Item1");
         end
 
-        function testItemDataDeleteTable(testCase)
-            % Table-backed parenDelete passes indexOp directly which is not
-            % supported by table subscripting — test struct path instead
+        function testItemDataDeleteStruct(testCase)
             data = struct('Name', {'Item1', 'Item2', 'Item3'}, 'Value', {1, 2, 3});
             itemData = catalog.item.ItemData(data);
             itemData(2) = [];
             testCase.verifyEqual(size(itemData, 2), 2);
+            testCase.verifyEqual(itemData(1).Name, 'Item1');
+            testCase.verifyEqual(itemData(2).Name, 'Item3');
         end
 
         function testItemDataSizeTable(testCase)
@@ -1191,12 +1189,6 @@ classdef CatalogTest < matlab.unittest.TestCase
         function teardownTest(testCase)
             % Clean up any temporary files or states
             delete(testCase.TestCatalog);
-        end
-    end
-
-    methods (Access = private)
-        function captureEvent(~, ~)
-            % Helper for event capture tests
         end
     end
 end
