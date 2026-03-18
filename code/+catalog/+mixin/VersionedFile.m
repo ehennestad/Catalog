@@ -99,6 +99,10 @@ classdef (Abstract) VersionedFile < handle
             obj.VersionNumber = getFileTimestamp(obj.FilePath);
             obj.markClean();
             wasSaved = true;
+
+            if ~nargout
+                clear wasSaved
+            end
         end
 
         function load(obj)
