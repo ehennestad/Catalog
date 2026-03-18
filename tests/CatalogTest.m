@@ -506,6 +506,9 @@ classdef CatalogTest < matlab.unittest.TestCase
         end
 
         function testObjectCacheUpdate(testCase)
+    
+            import matlab.unittest.fixtures.SuppressedWarningsFixture
+            testCase.applyFixture(SuppressedWarningsFixture('MATLAB:structOnObject'))
             % Create a test class
             testClassName = 'TestItemClass';
             testClassDef = sprintf(['classdef %s < handle\n' ...
