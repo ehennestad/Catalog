@@ -1,8 +1,21 @@
 classdef (Abstract) StructSerializer < catalog.mixin.HasPropertyArgs
+% StructSerializer - An abstract class for a catalog serializer class
+%
+% This provides an interface for concrete serializer classes. Subclasses
+% must implement the following properties and methods:
+%
+%   Properties:
+%       SerializationFormat     (Constant, Hidden)
+%
+%   Methods:
+%       save(obj, structArray, options)
+%       S = load(obj)
+
 
     % Todo: 
     %  [ ] Formalize preferences/attributes/configuration
     %  [ ] Back up old catalog during saving
+    %  [ ] Rename to CatalogSerializer?
 
 
     properties (Abstract, Constant, Hidden)
