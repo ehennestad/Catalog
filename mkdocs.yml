@@ -1,0 +1,31 @@
+site_name: Catalog
+site_description: A MATLAB library for managing collections of named, uniquely identified items with optional file persistence.
+repo_url: https://github.com/ehennestad/Catalog
+repo_name: ehennestad/Catalog
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: indigo
+    accent: indigo
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - API Reference: api.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
