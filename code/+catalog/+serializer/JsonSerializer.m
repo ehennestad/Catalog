@@ -75,6 +75,20 @@ classdef JsonSerializer < catalog.serializer.abstract.StructSerializer
         end
     end
 
+    methods % Raw struct I/O for VersionedFile
+        function writeStruct(~, filePath, S)
+            jsonStr = jsonencode(S, 'PrettyPrint', true);
+            fid = fopen(char(filePath), 'w');
+            cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+            fwrite(fid, jsonStr);
+        end
+
+        function S = readStruct(~, filePath)
+            jsonStr = fileread(char(filePath));
+            S = jsondecode(jsonStr);
+        end
+    end
+
     methods (Access = protected) % Subclasses may implement
         
         function onPathNameSet(obj)

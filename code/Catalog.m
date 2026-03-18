@@ -6,34 +6,29 @@ classdef Catalog < handle & ...
 %
 %   This class is something of a hybrid between a dictionary and a table.
 %   The main idea is that it will hold unique items, where an item is a
-%   structure or an object with a set of fields (properties). 
+%   structure or an object with a set of fields (properties).
 %
 %   The key differences from a table with row entries:
-%       
+%
 %       - All items should be named (items can be renamed).
 %       - All items will have a universal unique identifier (uuid) which
 %         should never change.
-%       - Items are ordered (and reorderable) and items can be retrieved by 
+%       - Items are ordered (and reorderable) and items can be retrieved by
 %         their row number
-% 
+%
 %   All manipulation of the data should occur through the methods add,
-%   replace, remove. This is to ensure that the identity (uuid) of items 
-%   are maintained.
+%   replace, remove, update. This is to ensure that the identity (uuid) of
+%   items are maintained.
 
 
 %   Todo:
 %   [ ] Add custom sorting of items. Default is to sort by name...
-%   [ ] Reorder variables in table display. Name first. Allow specification
+%   [ ] Reorder variables in table display. Name first. Allow specification
 %       of row order in a preference property?
-%   [ ] Method for adding items in batch.
-%   [ ] Consider whether it is a limitation that items need to have unique
-%       names. E.g. In a catalog of persons, it might happen that persons 
+%   [ ] Consider whether it is a limitation that items need to have unique
+%       names. E.g. In a catalog of persons, it might happen that persons
 %       have the same name.
-%   [ ] Consider whether to have a Preferences or Configuration property
-%       whose value is an object of a Preferences/Configuration class. 
-%   [ ] Implement matlab.mixin.indexing.RedefinesParen instead of subsref
-%   [ ] Establish a Data + Metadata/Configuration framework.
-%   [ ] Implement events, ItemAdded, ItemRemoved, ItemModified
+%   [ ] Implement matlab.mixin.indexing.RedefinesParen instead of subsref
 
 %   Questions.
 %   - If items are represented by a class, should we use class property
@@ -43,13 +38,11 @@ classdef Catalog < handle & ...
 %   Notes:
 %       The class uses a table to store data internally.
 
-    % properties (Abstract, Constant)
-    %     DEFAULT_ITEM % ??
-    % end
-    % 
-    % properties (Abstract, Constant, Hidden)
-    %     ITEM_TYPE           % Name / label for items in catalog
-    % end
+    events
+        ItemAdded
+        ItemRemoved
+        ItemModified
+    end
 
     properties (Hidden)
         ItemType (1,1) string = missing   % A label / category
@@ -61,8 +54,8 @@ classdef Catalog < handle & ...
     properties
         Description (1,1) string
     end
-        
-    properties (Dependent, SetAccess = private) % Hidden?
+
+    properties (Dependent, SetAccess = private)
         ItemNames (1,:) string
         NumItems (1,1) double
     end
@@ -77,7 +70,7 @@ classdef Catalog < handle & ...
         ItemRepresentation (1,1) string ...
             {mustBeMember(ItemRepresentation, ["struct", "table", "object"])} = "struct"
     end
-    
+
     properties (Access = protected)
         ItemsData (:,:) table
         ObjectCache (1,1) dictionary % Todo: here or subclass?
@@ -85,17 +78,17 @@ classdef Catalog < handle & ...
 
     properties (Access = private)
         % Whether to show the items as a collapsed or a full table.
-        CollapseItemDisplay = true 
+        CollapseItemDisplay = true
     end
 
     methods (Hidden) % Constructor
-        
+
         function obj = Catalog(data, options)
             arguments
                 data = struct.empty % structure array or table
                 options.?Catalog
             end
-                        
+
             obj.assignPropertyArguments(options)
 
             if nargin > 0 && ~isempty(data)
@@ -121,7 +114,7 @@ classdef Catalog < handle & ...
             item = obj.ItemsData(1,:);
             structItem = table2struct(item);
             blankItem = catalog.utility.struct.clearvalues(structItem);
-           
+
             switch obj.ItemRepresentation
                 case 'struct'
                     %pass
@@ -134,7 +127,7 @@ classdef Catalog < handle & ...
 
         % Add a new item to the Catalog
         function newItem = add(obj, newItem)
-        
+
             arguments
                 obj (1,1) Catalog       % An object of this class
                 newItem (1,:) {mustBeA(newItem, ["struct", "table"])}  % A structure or table representing an item of this class
@@ -144,15 +137,16 @@ classdef Catalog < handle & ...
                 newItem = struct2table(newItem);
             end
 
-            % Todo:
-            %  Assert that item has all field defined in the default item
-            %  Assert that item has a name
-            
+            % Ensure name field is string type to avoid char-length mismatch on append
+            if istablevar(newItem, obj.NameField) && ~isstring(newItem.(obj.NameField))
+                newItem.(obj.NameField) = string(newItem.(obj.NameField));
+            end
+
             name = obj.getItemName(newItem);
-            
+
             if any(strcmp(obj.ItemNames, name))
                 error('Catalog:NamedItemExists', ...
-                    'An item with the name "%s" already exists', name);  
+                    'An item with the name "%s" already exists', name);
             end
 
             idName = obj.IDField;
@@ -168,32 +162,95 @@ classdef Catalog < handle & ...
             end
 
             % Create a uuid
-            if ~isfield(newItem, idName)
+            if ~istablevar(newItem, idName)
                 newItem.(idName) = string( matlab.lang.internal.uuid );
             end
 
-            % Todo: Reorder fields.
-
-            if isempty(obj.ItemsData) 
-                obj.ItemsData = newItem; % Todo: Initialize data using empty item, on first time startup...
+            if isempty(obj.ItemsData)
+                obj.ItemsData = newItem;
             else
                 obj.ItemsData(end+1, :) = newItem;
             end
 
-            % Sort items.
             obj.sortItems()
+
+            % Fire ItemAdded event
+            itemIndex = obj.getItemIndex(string(name));
+            eventData = catalog.event.CatalogEventData(string(name), itemIndex, obj.ItemsData(itemIndex, :));
+            notify(obj, 'ItemAdded', eventData)
 
             if ~nargout
                 clear newItem
             end
         end
-        
-        % Get an new item from the Catalog
+
+        % Add multiple items to the Catalog in batch
+        function addMany(obj, items)
+
+            arguments
+                obj (1,1) Catalog
+                items {mustBeA(items, ["struct", "table"])}
+            end
+
+            if isstruct(items)
+                items = struct2table(items);
+            end
+
+            numNewItems = height(items);
+            nameField = obj.NameField;
+            idName = obj.IDField;
+
+            % Validate no duplicate names among new items
+            newNames = string(items.(nameField));
+            assert(numel(newNames) == numel(unique(newNames)), ...
+                'Catalog:DuplicateNames', ...
+                'The items to add contain duplicate names.');
+
+            % Validate no name conflicts with existing items
+            for i = 1:numNewItems
+                name = newNames(i);
+                if any(strcmp(obj.ItemNames, name))
+                    error('Catalog:NamedItemExists', ...
+                        'An item with the name "%s" already exists', name);
+                end
+            end
+
+            % Assign UUIDs to items missing them
+            if ~istablevar(items, idName)
+                uuids = arrayfun(@(~) string(matlab.lang.internal.uuid()), 1:numNewItems);
+                items.(idName) = uuids';
+            else
+                for i = 1:numNewItems
+                    currentId = items.(idName)(i);
+                    if ismissing(currentId) || currentId == ""
+                        items.(idName)(i) = string(matlab.lang.internal.uuid());
+                    end
+                end
+            end
+
+            if isempty(obj.ItemsData)
+                obj.ItemsData = items;
+            else
+                obj.ItemsData = [obj.ItemsData; items];
+            end
+
+            obj.assertUniqueItemUUids();
+            obj.sortItems();
+
+            % Fire ItemAdded event for each new item
+            for i = 1:numNewItems
+                name = newNames(i);
+                itemIndex = obj.getItemIndex(name);
+                eventData = catalog.event.CatalogEventData(name, itemIndex, obj.ItemsData(itemIndex, :));
+                notify(obj, 'ItemAdded', eventData)
+            end
+        end
+
+        % Get an item from the Catalog
         function item = get(obj, identifier)
-            % Remove name and uuid?
-           
+
             IND = obj.getItemIndex(identifier);
-            
+
             if any(IND)
                 item = obj.ItemsData(IND, :);
                 item = obj.getOutputRepresentation(item);
@@ -209,14 +266,6 @@ classdef Catalog < handle & ...
 
         % Replace an item in the Catalog
         function newItem = replace(obj, newItem)
-            
-            % Todo: Error out if Catalog is providing item objects. They
-            % should be modified directly...
-
-            % Make sure item has necessary fields...
-            % newItem = obj.validateItem(newItem);
-            
-            % Todo: Replacement should happen using the uuid.
 
             arguments
                 obj
@@ -231,7 +280,7 @@ classdef Catalog < handle & ...
             [itemExists, insertIdx] = obj.contains(itemName);
 
             isMatch = obj.matchesExistingItemIdentifier(newItem);
-            
+
             if ~any(isMatch)
                 error('Catalog:ItemNotFound', 'Item with name "%s" does not exist in this catalog. Use the method ''add'' to add a new item to the catalog', itemName)
             else
@@ -242,18 +291,51 @@ classdef Catalog < handle & ...
                 obj.ItemsData(isMatch, :) = newItem;
             end
 
+            % Fire ItemModified event
+            itemIndex = find(isMatch);
+            eventData = catalog.event.CatalogEventData(string(itemName), itemIndex, obj.ItemsData(itemIndex, :));
+            notify(obj, 'ItemModified', eventData)
+
             if ~nargout
                 clear newItem
             end
+        end
+
+        % Update a single field of an existing item
+        function update(obj, identifier, fieldName, newValue)
+
+            arguments
+                obj (1,1) Catalog
+                identifier
+                fieldName (1,1) string
+                newValue
+            end
+
+            itemIndex = obj.getItemIndex(identifier);
+
+            if isempty(itemIndex) || ~any(itemIndex)
+                error('Catalog:ItemNotFound', ...
+                    'No item was found with the given identifier.')
+            end
+
+            obj.ItemsData{itemIndex, fieldName} = newValue;
+
+            itemName = obj.ItemNames(itemIndex);
+            eventData = catalog.event.CatalogEventData(itemName, itemIndex, obj.ItemsData(itemIndex, :));
+            notify(obj, 'ItemModified', eventData)
         end
 
         % Remove an item from the Catalog
         function remove(obj, identifier)
             IND = obj.getItemIndex(identifier);
             if any(IND)
-                removedItemName = obj.ItemNames(IND);  % NB: Capture before removal
+                removedItemName = obj.ItemNames(IND);
+                removedItemData = obj.ItemsData(IND, :);
                 obj.ItemsData(IND, :) = [];
-                fprintf('"%s" was removed from the catalog.\n', removedItemName)
+
+                % Fire ItemRemoved event
+                eventData = catalog.event.CatalogEventData(removedItemName, IND, removedItemData);
+                notify(obj, 'ItemRemoved', eventData)
             else
                 if ismissing(obj.ItemType)
                     error('Catalog:ItemNotFound', '"%s" was not found in catalog', identifier)
@@ -262,7 +344,7 @@ classdef Catalog < handle & ...
                 end
             end
         end
-        
+
         % Check if an item (based on name) is contained in the Catalog
         function [tf, idx] = contains(obj, itemName)
             tf = ismember(obj.ItemNames, itemName);
@@ -270,14 +352,14 @@ classdef Catalog < handle & ...
                 idx = find(tf);
             end
         end
-    
+
         function clearObjectCache(obj)
             obj.ObjectCache = dictionary;
         end
     end
 
     methods % Get methods for properties
-        
+
         function itemNames = get.ItemNames(obj)
             if isempty(obj.ItemsData)
                 itemNames = string.empty;
@@ -292,11 +374,11 @@ classdef Catalog < handle & ...
     end
 
     methods (Hidden) % Public access, but not meant for users
-        
+
         function displayCatalogWithAllItems(obj, name)
 
             import matlab.internal.display.lineSpacingCharacter;
-            
+
             obj.CollapseItemDisplay = false;
 
             newline = "\n"+lineSpacingCharacter;
@@ -310,9 +392,9 @@ classdef Catalog < handle & ...
             obj.CollapseItemDisplay = true; % Todo: onCleanup instead
         end
     end
-    
+
     methods (Access = protected)
-        
+
         function sortItems(obj)
             [~, idx] = sort(obj.ItemNames);
             obj.ItemsData = obj.ItemsData(idx, :);
@@ -337,13 +419,13 @@ classdef Catalog < handle & ...
         end
 
         function idx = getItemIndex(obj, itemName)
-            
+
             if isnumeric(itemName) % Assume index was given instead of name
                 idx = itemName;
-                
+
             elseif obj.isuuid(itemName) % Assume uuid was given instead of name
                 idx = find(strcmp(obj.ItemsData.(obj.IDField), itemName));
-                
+
             else
                 idx = find(strcmp(obj.ItemNames, itemName));
             end
@@ -370,13 +452,12 @@ classdef Catalog < handle & ...
         function getItemIdentifier(obj, item)
 
         end
-    
+
         function displayItems(obj, varName)
             titleTxt = sprintf('  <strong>Available Items:</strong>');
 
             obj.updateItemDataFromObjectCache()
 
-            %T = struct2table(obj.ItemsData, 'AsArray', true);
             T = obj.ItemsData;
             T.Properties.RowNames = arrayfun(@(i) num2str(i), 1:obj.NumItems, 'uni', 0);
             T.(obj.NameField) = string(T.(obj.NameField));
@@ -384,7 +465,7 @@ classdef Catalog < handle & ...
                 %T = removevars(T, obj.IDField);
             end
             fprintf('%s\n', titleTxt)
-            
+
             if obj.CollapseItemDisplay
                 tableStr = evalc('T');
                 idx = strfind(tableStr, newline);
@@ -418,11 +499,11 @@ classdef Catalog < handle & ...
             assert(numel(allIdentifiers) == numel(unique(allIdentifiers)), ...
                 'One or more catalog items do not have unique identifiers.')
         end
-    
+
         function itemObjects = getItemObject(obj, items)
-            
+
             assert(~ismissing(obj.ItemClass) && ~strcmp(obj.ItemClass, 'struct'))
-            
+
             itemObjects = cell( 1, height(items) );
             allItemIdentifiers = items.(obj.IDField);
 
@@ -448,7 +529,7 @@ classdef Catalog < handle & ...
             end
             itemObjects = cat(2, itemObjects{:});
         end
-    
+
         function updateItemDataFromObjectCache(obj)
             if ~isConfigured(obj.ObjectCache)
                 return
@@ -462,7 +543,7 @@ classdef Catalog < handle & ...
                 for iKey = 1:numel(cachedKeys)
                     currentKey = cachedKeys(iKey);
                     currentObject = obj.ObjectCache(currentKey);
-                    
+
                     rowIdx = obj.getItemIndex(currentKey);
                     obj.ItemsData(rowIdx, :) = currentObject.toTable();
                 end
@@ -471,7 +552,7 @@ classdef Catalog < handle & ...
     end
 
     methods (Sealed, Access = protected, Hidden) % Overridden display methods
-        
+
         function str = getHeader(obj)
             str = getHeader@matlab.mixin.CustomDisplay(obj);
             if ~ismissing(obj.ItemType)
@@ -497,7 +578,7 @@ classdef Catalog < handle & ...
             end
             str{end+1} = newline;
             str{end+1} = sprintf('  Show %s\n', '<a href="matlab:methods Catalog" style="font-weight:bold">available methods</a>');
-        
+
             str = strjoin(str, '');
         end
     end
@@ -505,12 +586,12 @@ classdef Catalog < handle & ...
     methods (Sealed, Hidden) % Overridden indexing method
 
         function varargout = subsref(obj, s)
-            
+
             obj.checkForPackagePrefix(s)
 
             numOutputs = nargout;
             varargout = cell(1, numOutputs);
-                        
+
             if strcmp( s(1).type, '()')
                 if numel(s(1).subs) == 1
                     s(1).subs{end+1} = ':';
@@ -534,7 +615,7 @@ classdef Catalog < handle & ...
                 end
             end
         end
-        
+
         function n = numArgumentsFromSubscript(obj, s, indexingContext)
             if strcmp( s(1).type, '()')
                 s(1).subs{end+1} = ':';
@@ -551,7 +632,7 @@ classdef Catalog < handle & ...
         function tf = isuuid(value)
         % isuuid - Check if a string value is a formatted as a uuid
             tf = false;
-            
+
             if ischar(value) || isstring(value)
                 expression = '\w{8}-\w{4}-\w{4}-\w{4}-\w{12}';
                 tf = ~isempty(regexp(value, expression, 'once'));
@@ -561,7 +642,7 @@ classdef Catalog < handle & ...
         function checkForPackagePrefix(s)
         % checkForPackagePrefix - Sanity check as it is easy to fall for
         % the temptation of calling a variable "catalog"
-        
+
         %   Note: This is an internal method
 
             isDotReference = arrayfun(@(c) strcmp(c.type, '.'), s );
@@ -572,7 +653,7 @@ classdef Catalog < handle & ...
                 pathInfo = what(fullfile(rootDir, '+catalog'));
                 packageNames = pathInfo.packages;
             end
-            
+
             if isDotReference(1)
                 if any( strcmp(s(1).subs, packageNames) )
                     ME = MException('Catalog:InvalidIndexOperation', ...
