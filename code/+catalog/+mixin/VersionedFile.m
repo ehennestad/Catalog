@@ -126,7 +126,7 @@ function saveStructToMatFile(filePath, S) %#ok<INUSD>
 end
 
 function S = loadMatFile(filePath)
-    S = load(filePath);
+    S = load(filePath, '-mat');
 end
 
 function moveFile(source, target)

@@ -137,9 +137,10 @@ classdef Catalog < handle & ...
                 newItem = struct2table(newItem);
             end
 
-            % Todo:
-            %  Assert that item has all field defined in the default item
-            %  Assert that item has a name
+            % Ensure name field is string type to avoid char-length mismatch on append
+            if istablevar(newItem, obj.NameField) && ~isstring(newItem.(obj.NameField))
+                newItem.(obj.NameField) = string(newItem.(obj.NameField));
+            end
 
             name = obj.getItemName(newItem);
 

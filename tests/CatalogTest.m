@@ -673,9 +673,9 @@ classdef CatalogTest < matlab.unittest.TestCase
             testCase.TestCatalog.addMany(items);
 
             testCase.verifyEqual(testCase.TestCatalog.NumItems, 3);
-            testCase.verifyTrue(testCase.TestCatalog.contains("Batch1"));
-            testCase.verifyTrue(testCase.TestCatalog.contains("Batch2"));
-            testCase.verifyTrue(testCase.TestCatalog.contains("Batch3"));
+            testCase.verifyTrue(any(testCase.TestCatalog.contains("Batch1")));
+            testCase.verifyTrue(any(testCase.TestCatalog.contains("Batch2")));
+            testCase.verifyTrue(any(testCase.TestCatalog.contains("Batch3")));
         end
 
         function testAddManyWithTable(testCase)
@@ -690,7 +690,7 @@ classdef CatalogTest < matlab.unittest.TestCase
             items = struct('Name', {'Dup', 'Dup'}, 'Value', {1, 2});
             testCase.verifyError( ...
                 @() testCase.TestCatalog.addMany(items), ...
-                'MATLAB:assert:failed');
+                'Catalog:DuplicateNames');
         end
 
         function testAddManyConflictsWithExistingThrowsError(testCase)
