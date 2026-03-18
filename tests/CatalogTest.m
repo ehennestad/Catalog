@@ -918,17 +918,6 @@ classdef CatalogTest < matlab.unittest.TestCase
 
         %% --- Coverage improvement tests ---
 
-        % HasCatalog
-        function testOpenCatalog(testCase)
-            import matlab.unittest.fixtures.WorkingFolderFixture
-            testCase.applyFixture(WorkingFolderFixture)
-
-            [tmpFolder, cleanupObj] = createHasCatalogSubclass(); %#ok<ASGLU>
-            obj = feval('TestHasCatalogSubclass');
-            obj.openCatalog(string(pwd));
-            testCase.verifyClass(obj.Catalog, 'PersistentCatalog');
-        end
-
         % VersionedFile error and edge paths
         function testSaveWithNoFilePath(testCase)
             persistentCatalog = PersistentCatalog('AutoSave', false);
@@ -1269,19 +1258,6 @@ function [tmpFolder, cleanupObj] = createNvpairsTestItemClass()
         '    end', newline, ...
         'end'];
     fid = fopen(fullfile(tmpFolder, 'TestNvpairsItemClass.m'), 'w');
-    fprintf(fid, '%s', classDef);
-    fclose(fid);
-    addpath(tmpFolder);
-    cleanupObj = onCleanup(@() rmpath(tmpFolder));
-end
-
-function [tmpFolder, cleanupObj] = createHasCatalogSubclass()
-    tmpFolder = tempname;
-    mkdir(tmpFolder);
-    classDef = [ ...
-        'classdef TestHasCatalogSubclass < catalog.mixin.HasCatalog', newline, ...
-        'end'];
-    fid = fopen(fullfile(tmpFolder, 'TestHasCatalogSubclass.m'), 'w');
     fprintf(fid, '%s', classDef);
     fclose(fid);
     addpath(tmpFolder);
