@@ -1,9 +1,8 @@
-classdef PersistentCatalog < Catalog & catalog.mixin.VersionedFile
+classdef PersistentCatalog < Catalog & catalog.mixin.VersionedFile & catalog.mixin.IsSerializable
 % PersistentCatalog - A catalog which is stored on the file system
 %
 %   Uses VersionedFile for atomic save, version tracking, and dirty state.
-%   Data is always saved in mat format. Json is available as an export/import
-%   format via exportToJson and importFromJson.
+%   Uses IsSerializable for pluggable serialization format management.
 %
 %   On load, the mat file is preferred. If no mat file exists, falls back
 %   to loading from a json folder if one is present.
@@ -155,7 +154,7 @@ classdef PersistentCatalog < Catalog & catalog.mixin.VersionedFile
         end
     end
 
-    methods (Access = protected) % VersionedFile implementation
+    methods (Access = protected) % VersionedFile abstract: data packing
         function S = toFileStruct(obj)
             data = obj.cleanDataOnSave(obj.ItemsData);
             S.ItemsData = data;
@@ -199,6 +198,16 @@ classdef PersistentCatalog < Catalog & catalog.mixin.VersionedFile
             elseif isfield(S, 'Preferences')
                 obj.Metadata = S.Preferences;
             end
+        end
+    end
+
+    methods (Access = protected) % VersionedFile abstract: file I/O via serializer
+        function writeToFile(obj, filePath, S)
+            obj.Serializer.writeStruct(filePath, S);
+        end
+
+        function S = readFromFile(obj, filePath)
+            S = obj.Serializer.readStruct(filePath);
         end
     end
 

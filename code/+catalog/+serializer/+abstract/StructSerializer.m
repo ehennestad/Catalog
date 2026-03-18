@@ -62,6 +62,12 @@ classdef (Abstract) StructSerializer < catalog.mixin.HasPropertyArgs
         save(obj, structArray, options)
 
         structArray = load(obj)
+
+        writeStruct(obj, filePath, S)
+        %writeStruct Write a scalar struct to a file
+
+        S = readStruct(obj, filePath)
+        %readStruct Read a scalar struct from a file
     end
 
     methods (Access = protected) % Subclasses may implement

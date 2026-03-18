@@ -39,6 +39,16 @@ classdef MatSerializer < catalog.serializer.abstract.StructSerializer
         end
     end
 
+    methods % Raw struct I/O for VersionedFile
+        function writeStruct(~, filePath, S) %#ok<INUSD>
+            save(char(filePath), '-struct', 'S')
+        end
+
+        function S = readStruct(~, filePath)
+            S = load(char(filePath), '-mat');
+        end
+    end
+
     methods (Access = protected) % Subclasses may implement
         function onPathNameSet(obj)
             if ismissing(obj.PathName); return; end

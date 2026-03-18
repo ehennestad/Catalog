@@ -1,25 +1,17 @@
 classdef IsSerializable < handle & catalog.mixin.HasPropertyArgs
-
-    % Todo: 
-    % [ ] Add yaml serialization
-    % [ ] Generalize a way to create name for each item
-    % [ ] Serializer should be a public property or there should be a
-    %     public method for setting a custom serializer
-
+% IsSerializable - Mixin providing pluggable serialization format management
+%
+%   Manages a Serializer object that knows how to read/write structs in a
+%   specific format (mat, json). The serializer is selected via the
+%   SerializationFormat property and can be accessed by subclasses to
+%   perform format-specific I/O.
 
     properties
-        SaveFolder (1,1) string = missing % Todo: Rename to PathName
-    
         SerializationFormat (1,1) string ...
             {mustBeMember(SerializationFormat, ["mat", "json"])} = "mat"
     end
 
-    properties (Abstract, Dependent, Access = protected)
-        Data
-        Names
-    end
-
-    properties (Access = private)
+    properties (SetAccess = private, GetAccess = protected)
         Serializer (1,1) catalog.serializer.abstract.StructSerializer = ...
             catalog.serializer.MatSerializer()
     end
@@ -39,60 +31,18 @@ classdef IsSerializable < handle & catalog.mixin.HasPropertyArgs
         end
     end
 
-    methods % Set methods for properties
-        
-        function set.SaveFolder(obj, value)
-            obj.SaveFolder = value;
-            obj.onSaveFolderSet()
-        end
-
+    methods % Set methods
         function set.SerializationFormat(obj, value)
             obj.SerializationFormat = value;
-            obj.onSerializationFormatSet()
+            obj.updateSerializer();
         end
     end
 
-    methods % Save/load methods
-        function save(obj)
-            if ismissing(obj.SaveFolder)
-                error('No file location specified')
-            end
-            data = table2struct(obj.Data);
-            obj.Serializer.save(data, "Names", obj.Names);
-        end
-
-        function load(obj)
-            if ismissing(obj.SaveFolder)
-                error('No file location specified')
-            end
-            obj.Data = struct2table(obj.Serializer.load());
-        end
-
-        function delete(obj, item)
-            %todo
-        end
-
-        function update(obj, item)
-            %todo
-        end
-    end
-    
     methods (Access = private)
-        
-        function onSaveFolderSet(obj)
-            obj.updateSerializer()
-        end
-        
-        function onSerializationFormatSet(obj)
-            obj.updateSerializer()
-        end
-
         function updateSerializer(obj)
             serializerFunctionName = ...
                 obj.SerializerFunctionMap(obj.SerializationFormat);
-
-            obj.Serializer = feval(serializerFunctionName, ...
-                "PathName", obj.SaveFolder);
+            obj.Serializer = feval(serializerFunctionName);
         end
     end
 end

@@ -1,13 +1,16 @@
 classdef (Abstract) VersionedFile < handle
-% VersionedFile - Mixin providing atomic file save, version tracking, and dirty state
+% VersionedFile - Mixin providing atomic file persistence with version tracking
 %
 %   Subclasses must implement:
-%     S = toFileStruct(obj)      - Return a struct representing the object state
-%     fromFileStruct(obj, S)     - Restore object state from a struct
+%     S = toFileStruct(obj)              - Serialize object state to a struct
+%     fromFileStruct(obj, S)             - Restore object state from a struct
+%     writeToFile(obj, filePath, S)      - Write struct to file in chosen format
+%     S = readFromFile(obj, filePath)    - Read struct from file in chosen format
 %
 %   Provides:
-%     save(obj, force)           - Atomic save (temp -> verify -> rename)
+%     save(obj, force)           - Atomic save (temp -> verify -> copyfile)
 %     load(obj)                  - Load state from file
+%     saveCopy(obj, savePath)    - Save a copy without changing FilePath
 %     isClean(obj)               - True if no unsaved changes
 %     markClean(obj)             - Clear dirty flag
 %     markDirty(obj)             - Set dirty flag
@@ -28,6 +31,8 @@ classdef (Abstract) VersionedFile < handle
     methods (Abstract, Access = protected)
         S = toFileStruct(obj)
         fromFileStruct(obj, S)
+        writeToFile(obj, filePath, S)
+        S = readFromFile(obj, filePath)
     end
 
     methods
@@ -48,8 +53,8 @@ classdef (Abstract) VersionedFile < handle
                 tf = true;
                 return
             end
-            fileTimestamp = getFileTimestamp(obj.FilePath);
-            tf = fileTimestamp <= obj.VersionNumber;
+            versionNumberInFile = obj.loadVersionNumber();
+            tf = versionNumberInFile == obj.VersionNumber;
         end
 
         function wasSaved = save(obj, force)
@@ -65,44 +70,44 @@ classdef (Abstract) VersionedFile < handle
             end
 
             if obj.isClean() && ~force
+                if ~nargout; clear wasSaved; end
                 return
             end
 
             fileStruct = obj.toFileStruct();
 
-            % Atomic save: write to temp file, verify, then rename
+            % Increment version and embed in struct
+            currentVersion = obj.loadVersionNumber();
+            newVersion = currentVersion + 1;
+            fileStruct.VersionNumber = newVersion;
+
+            % Ensure target folder exists
             folderPath = fileparts(obj.FilePath);
             if ~isfolder(folderPath)
                 mkdir(folderPath)
             end
 
-            tempFilePath = obj.FilePath + ".tmp";
-            saveStructToMatFile(char(tempFilePath), fileStruct)
+            % Atomic save: write to temp file, verify, then copyfile
+            tempFilePath = strrep(obj.FilePath, fileExtension(obj.FilePath), ".tempsave" + fileExtension(obj.FilePath));
+            obj.writeToFile(tempFilePath, fileStruct);
 
-            % Verify the temp file loads correctly
             try
-                verifiedData = loadMatFile(char(tempFilePath));
+                verifiedData = obj.readFromFile(tempFilePath);
                 assert(isstruct(verifiedData), 'Saved data is not a valid struct.')
             catch cause
-                if isfile(tempFilePath); delete(tempFilePath); end
-                exception = MException('VersionedFile:SaveFailed', ...
-                    'Verification of saved file failed: %s', cause.message);
-                throw(exception)
+                error('VersionedFile:SaveFailed', ...
+                    'Verification failed. Backup at: %s\n%s', ...
+                    tempFilePath, cause.message)
             end
 
-            % Rename temp file over target
-            if isfile(obj.FilePath)
-                delete(obj.FilePath)
-            end
-            moveFile(char(tempFilePath), char(obj.FilePath))
+            copyfile(char(tempFilePath), char(obj.FilePath));
+            deleteFile(tempFilePath);
 
-            obj.VersionNumber = getFileTimestamp(obj.FilePath);
+            obj.VersionNumber = newVersion;
             obj.markClean();
             wasSaved = true;
 
-            if ~nargout
-                clear wasSaved
-            end
+            if ~nargout; clear wasSaved; end
         end
 
         function load(obj)
@@ -111,33 +116,66 @@ classdef (Abstract) VersionedFile < handle
             end
 
             if ~isfile(obj.FilePath)
+                error('VersionedFile:FileNotFound', ...
+                    'File "%s" does not exist.', obj.FilePath)
+            end
+
+            fileStruct = obj.readFromFile(obj.FilePath);
+            obj.fromFileStruct(fileStruct);
+
+            if isfield(fileStruct, 'VersionNumber') && ~isempty(fileStruct.VersionNumber)
+                obj.VersionNumber = int64(fileStruct.VersionNumber);
+            else
+                obj.VersionNumber = int64(0);
+            end
+
+            obj.markClean();
+        end
+
+        function saveCopy(obj, savePath)
+        % saveCopy - Save a copy of this object to the given file path
+            arguments
+                obj
+                savePath (1,1) string
+            end
+
+            originalPath = obj.FilePath;
+            obj.FilePath = savePath;
+            obj.save(true);
+            obj.FilePath = originalPath;
+        end
+    end
+
+    methods (Access = protected)
+        function versionNumber = loadVersionNumber(obj)
+        % loadVersionNumber - Read VersionNumber from file without full load
+            if ismissing(obj.FilePath) || ~isfile(obj.FilePath)
+                versionNumber = int64(0);
                 return
             end
 
-            fileStruct = loadMatFile(char(obj.FilePath));
-            obj.fromFileStruct(fileStruct)
-
-            obj.VersionNumber = getFileTimestamp(obj.FilePath);
-            obj.markClean();
+            try
+                fileStruct = obj.readFromFile(obj.FilePath);
+                if isfield(fileStruct, 'VersionNumber') && ~isempty(fileStruct.VersionNumber)
+                    versionNumber = int64(fileStruct.VersionNumber);
+                else
+                    versionNumber = int64(0);
+                end
+            catch
+                versionNumber = int64(0);
+            end
         end
     end
 end
 
-% Local functions to avoid name clashes with class methods
-
-function saveStructToMatFile(filePath, S) %#ok<INUSD>
-    save(filePath, '-struct', 'S')
+% Local function to avoid name clash with built-in delete
+function deleteFile(filePath)
+    if isfile(filePath)
+        delete(char(filePath));
+    end
 end
 
-function S = loadMatFile(filePath)
-    S = load(filePath, '-mat');
-end
-
-function moveFile(source, target)
-    movefile(source, target)
-end
-
-function timestamp = getFileTimestamp(filePath)
-    fileInfo = dir(filePath);
-    timestamp = int64(fileInfo.datenum * 1e6);
+% Local function to extract file extension
+function ext = fileExtension(filePath)
+    [~, ~, ext] = fileparts(filePath);
 end
