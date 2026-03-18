@@ -1,5 +1,5 @@
 function testToolbox(varargin)
-    installMatBox()
+    installMatBox("commit")
     projectRootDirectory = catalogtools.projectdir();
-    matbox.tasks.testToolbox(projectRootDirectory, varargin{:})
+    matbox.tasks.testToolbox(projectRootDirectory, "SourceFolderName", "code", varargin{:})
 end
